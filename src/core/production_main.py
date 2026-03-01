@@ -321,10 +321,12 @@ class ProductionTradingPipeline:
         except Exception as e:
             self.logger.error(f"Erreur sauvegarde rapport: {e}")
     
-    def run_complete_pipeline(self, start_date=None):
+    def run_complete_pipeline(self, start_date=None, end_date=None):
         """Lance le pipeline complet"""
         self.logger.info("\n" + "="*70)
         self.logger.info(f"[ROCKET] PRODUCTION PIPELINE - {self.ticker}")
+        if end_date:
+            self.logger.info(f"Fenetre: {start_date} -> {end_date}")
         self.logger.info("="*70)
         
         # Checks
@@ -334,7 +336,7 @@ class ProductionTradingPipeline:
         
         # Pipeline
         steps = [
-            ('Data Fetch', self.fetch_data, {'start_date': start_date}),
+            ('Data Fetch', self.fetch_data, {'start_date': start_date, 'end_date': end_date}),
             ('Features', self.create_features, {}),
             ('Regimes', self.detect_regimes, {}),
             ('Training', self.train_model, {}),

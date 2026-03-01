@@ -41,6 +41,15 @@ TRAINER_CONFIG = {
     # Fichier d'etat persistant
     'state_file': str(project_root / 'data' / 'trainer_state.json'),
 
+    # Walk-forward: avance la fenetre de test de N jours a chaque cycle
+    # Le modele explore differentes periodes de marche (bull, bear, conso)
+    # et l'adaptation des params a de vrais effets mesurables
+    'walk_forward': {
+        'enabled': True,
+        # Pas d'avancement par cycle (jours)
+        'step_days': 14,
+    },
+
     # Seuils d'adaptation automatique
     'adaptation': {
         # Si win_rate < ce seuil sur les 5 derniers cycles -> rehausser le signal_threshold de +0.05
@@ -87,10 +96,19 @@ def load_state(state_file: str) -> dict:
     """Charge l'etat du trainer (cycles passes, params ajustes)"""
     if Path(state_file).exists():
         with open(state_file, 'r') as f:
-            return json.load(f)
+            state = json.load(f)
+        # Migration: ajouter walk_forward_end_date si absent (ancienne version)
+        if 'walk_forward_end_date' not in state:
+            state['walk_forward_end_date'] = (
+                datetime.now() - timedelta(days=365)
+            ).strftime('%Y-%m-%d')
+        return state
+    # Etat initial: walk-forward demarre il y a 12 mois
+    initial_end = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
     return {
         'total_cycles': 0,
         'last_run': None,
+        'walk_forward_end_date': initial_end,  # Fenetre courante du walk-forward
         'ticker_overrides': {},   # { 'TSLA': { 'signal_threshold': 0.35 } }
         'ticker_history': {},     # { 'AAPL': [{ cycle, return_pct, win_rate, ... }] }
     }
@@ -182,8 +200,21 @@ def run_training_cycle(logger, run_once=False):
     cycle_num = state['total_cycles'] + 1
     cycle_start = datetime.now()
 
+    # --- Walk-forward: calculer la fenetre de donnees pour ce cycle ---
+    wf_cfg = TRAINER_CONFIG['walk_forward']
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    wf_end_date = state.get('walk_forward_end_date', today_str)
+    # Si on a rattrape aujourd'hui, on reste en mode live (donnees completes)
+    if wf_end_date >= today_str:
+        wf_end_date = today_str
+    walk_forward_active = wf_end_date < today_str
+
     logger.info("=" * 70)
     logger.info(f"CYCLE #{cycle_num} - {cycle_start.strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info("Fenetre donnees: {} -> {} [{}]".format(
+        START_DATE, wf_end_date,
+        "walk-forward" if walk_forward_active else "live"
+    ))
     logger.info("=" * 70)
 
     # Analyse des performances passees et adaptation
@@ -213,13 +244,17 @@ def run_training_cycle(logger, run_once=False):
             pipeline._signal_threshold_override = overrides.get('signal_threshold', None)
             pipeline._stop_loss_override = overrides.get('stop_loss_pct', None)
 
-            success = pipeline.run_complete_pipeline(start_date=START_DATE)
+            success = pipeline.run_complete_pipeline(
+                start_date=START_DATE,
+                end_date=wf_end_date if walk_forward_active else None
+            )
 
             if success and pipeline.backtest_results:
                 r = pipeline.backtest_results
                 result = {
                     'cycle': cycle_num,
                     'date': cycle_start.isoformat(),
+                    'wf_end_date': wf_end_date,
                     'return_pct': r.get('total_return_pct', 0),
                     'win_rate': r.get('win_rate', 0) / 100,
                     'n_trades': r.get('buy_trades', 0),
@@ -261,6 +296,14 @@ def run_training_cycle(logger, run_once=False):
 
         # Afficher le leaderboard global
         tracker.print_summary(logger)
+
+    # Avancer la fenetre walk-forward pour le prochain cycle
+    if wf_cfg['enabled'] and walk_forward_active:
+        current_end = datetime.strptime(state['walk_forward_end_date'], '%Y-%m-%d')
+        next_end = current_end + timedelta(days=wf_cfg['step_days'])
+        next_end_str = min(next_end, datetime.now()).strftime('%Y-%m-%d')
+        state['walk_forward_end_date'] = next_end_str
+        logger.info(f"Walk-forward avance -> {next_end_str} (+{wf_cfg['step_days']}j)")
 
     # Sauvegarder l'etat
     state['total_cycles'] = cycle_num
