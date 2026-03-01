@@ -254,12 +254,12 @@ class ProductionTradingPipeline:
         self.logger.info("RESULTATS BACKTEST")
         self.logger.info("="*70)
         
-        self.logger.info(f"Rendement total: {results.get('total_return', 0):.2%}")
-        self.logger.info(f"Nombre trades: {results.get('total_trades', 0)}")
-        self.logger.info(f"Taux reussite: {results.get('win_rate', 0):.1%}")
+        self.logger.info(f"Rendement total: {results.get('total_return_pct', 0):.2f}%")
+        self.logger.info(f"Nombre trades: {results.get('buy_trades', 0)} achats / {results.get('sell_trades', 0)} ventes")
+        self.logger.info(f"Taux reussite: {results.get('win_rate', 0):.1f}%")
         self.logger.info(f"Profit moyen: ${results.get('avg_profit', 0):.2f}")
-        self.logger.info(f"Max drawdown: {results.get('max_drawdown', 0):.2%}")
-        self.logger.info(f"Sharpe ratio: {results.get('sharpe_ratio', 0):.2f}")
+        self.logger.info(f"Max drawdown: {results.get('max_drawdown', 0):.2f}%")
+        self.logger.info(f"Capital final: ${results.get('final_value', 0):.2f}")
     
     def save_report(self):
         """Sauvegarde rapport execution"""
@@ -277,10 +277,11 @@ class ProductionTradingPipeline:
                 
                 if self.backtest_results:
                     f.write("[BACKTEST RESULTS]\n")
-                    f.write(f"Rendement: {self.backtest_results.get('total_return', 0):.2%}\n")
-                    f.write(f"Trades: {self.backtest_results.get('total_trades', 0)}\n")
-                    f.write(f"Win Rate: {self.backtest_results.get('win_rate', 0):.1%}\n")
-                    f.write(f"Drawdown: {self.backtest_results.get('max_drawdown', 0):.2%}\n")
+                    f.write(f"Rendement: {self.backtest_results.get('total_return_pct', 0):.2f}%\n")
+                    f.write(f"Trades: {self.backtest_results.get('buy_trades', 0)} achats / {self.backtest_results.get('sell_trades', 0)} ventes\n")
+                    f.write(f"Win Rate: {self.backtest_results.get('win_rate', 0):.1f}%\n")
+                    f.write(f"Drawdown: {self.backtest_results.get('max_drawdown', 0):.2f}%\n")
+                    f.write(f"Capital final: ${self.backtest_results.get('final_value', 0):.2f}\n")
                 
                 f.write(f"\n[ERRORS]\n")
                 f.write(f"Total errors: {self.error_handler.error_count}\n")
