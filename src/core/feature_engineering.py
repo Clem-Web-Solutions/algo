@@ -148,14 +148,12 @@ class FeatureEngineering:
         X_train_scaled = scaler.fit_transform(X_train)
         X_test_scaled = scaler.transform(X_test)
         
-        # Convertir en DataFrame pour garder les index
+        # Convertir en DataFrame en preservant l'index datetime (critique pour le backtest)
         X_train = pd.DataFrame(X_train_scaled, columns=X_train.columns, index=X_train.index)
         X_test = pd.DataFrame(X_test_scaled, columns=X_test.columns, index=X_test.index)
-        
-        # Reset indices pour matching avec dates
-        y_train = y_train.reset_index(drop=True)
-        y_test = y_test.reset_index(drop=True)
-        X_train = X_train.reset_index(drop=True)
-        X_test = X_test.reset_index(drop=True)
-        
+
+        # Aligner y sur le meme index que X (sans reset pour conserver les dates)
+        y_train = y_train.loc[X_train.index]
+        y_test = y_test.loc[X_test.index]
+
         return X_train, X_test, y_train, y_test, scaler
