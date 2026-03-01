@@ -210,7 +210,7 @@ class ProductionTradingPipeline:
             return False
     
     def run_backtest(self):
-        """Lance backtest avec strategie adaptative"""
+        """Lance backtest avec strategie adaptative selon le regime dominant"""
         self.logger.info("\n[5/5] BACKTEST")
         
         try:
@@ -219,20 +219,41 @@ class ProductionTradingPipeline:
                 return False
             
             with self.error_handler.error_context("Backtest"):
-                # Seuil adaptatif : 0.45 par defaut, abaisse si modele trop conservateur
+                # Determiner le regime dominant sur la periode de test
+                dominant_regime = 'UNKNOWN'
+                if self.regime_history is not None and len(self.regime_history) > 0:
+                    dominant_regime = self.regime_history['regime'].value_counts().index[0]
+
+                # Recuperer les parametres adaptatifs pour ce regime
+                adaptive_params = AdaptiveStrategy.STRATEGY_PARAMS.get(
+                    dominant_regime,
+                    AdaptiveStrategy.STRATEGY_PARAMS['UNKNOWN']
+                )
+                signal_threshold_base = adaptive_params['signal_threshold']
+                self.logger.info(f"Regime dominant: {dominant_regime} -> "
+                                 f"SL={adaptive_params['stop_loss_pct']}% / "
+                                 f"TP={adaptive_params['take_profit_pct']}% / "
+                                 f"seuil_base={signal_threshold_base}")
+
+                # Seuil adaptatif : regime comme base, fallback si trop peu de BUY
                 proba = self.model.predict_proba(self.X_test)[:, 1]
-                threshold = 0.45
-                if (proba >= threshold).mean() < 0.05:  # moins de 5% de BUY
-                    # Prendre le percentile 80 comme seuil (garantit ~20% de signaux BUY)
+                threshold = signal_threshold_base
+                if (proba >= threshold).mean() < 0.04:  # moins de 4% de BUY
                     threshold = max(0.30, float(np.percentile(proba, 80)))
                 predictions = (proba >= threshold).astype(int)
                 n_buy = int(predictions.sum())
                 n_sell = int((predictions == 0).sum())
                 self.logger.info(f"Predictions: {n_buy} BUY / {n_sell} SELL (seuil={threshold:.3f})")
 
-                # Creer backtest engine
-                engine = BacktestEngine(**BACKTEST_CONFIG)
-                
+                # Creer backtest engine avec parametres adaptatifs
+                engine = BacktestEngine(
+                    initial_capital=BACKTEST_CONFIG['initial_capital'],
+                    position_size_pct=BACKTEST_CONFIG['position_size_pct'],
+                    stop_loss_pct=adaptive_params['stop_loss_pct'],
+                    take_profit_pct=adaptive_params['take_profit_pct'],
+                    use_trend_filter=adaptive_params['use_trend_filter'],
+                )
+
                 # Executer le backtest
                 self.backtest_results = engine.run_backtest(
                     data=self.data,
