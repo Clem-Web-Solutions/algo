@@ -1,0 +1,32 @@
+[Unit]
+Description=Algo Trading - Continuous Trainer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=debian
+WorkingDirectory=/home/debian/algo
+
+# Utilise le venv du projet
+ExecStart=/home/debian/algo/venv/bin/python3 /home/debian/algo/scripts/continuous_trainer.py
+
+# Redemarrage automatique si crash (avec delai de 60s)
+Restart=on-failure
+RestartSec=60
+
+# Variables d'environnement
+Environment=PYTHONUNBUFFERED=1
+Environment=TZ=UTC
+
+# Logs systemd (consultables via journalctl -u algo-trainer -f)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=algo-trainer
+
+# Arret propre : envoie SIGTERM, attend 30s, puis SIGKILL
+KillMode=mixed
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
