@@ -1,0 +1,3 @@
+"""
+Trading Algorithmique - Module principal
+"""

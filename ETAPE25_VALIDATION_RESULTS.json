@@ -1,0 +1,244 @@
+{
+  "timestamp": "2026-02-25T20:01:42.944372",
+  "status": "READY",
+  "passed": 39,
+  "warnings": 0,
+  "failed": 0,
+  "total": 39,
+  "results": [
+    {
+      "component": "Documentation",
+      "requirement": "Trader manual exists",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Documentation",
+      "requirement": "Startup checklist exists",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Python",
+      "requirement": "Python version: 3.14.2",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Directory",
+      "requirement": "src/trading exists",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Directory",
+      "requirement": "src/core exists",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Directory",
+      "requirement": "src/analysis exists",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Directory",
+      "requirement": "data exists",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Directory",
+      "requirement": "docs exists",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Directory",
+      "requirement": "reports exists",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "File",
+      "requirement": "src/trading/live_trading_config.py (CRITICAL)",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "File",
+      "requirement": "src/trading/position_sizing.py (CRITICAL)",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "File",
+      "requirement": "src/trading/live_monitoring.py (CRITICAL)",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "File",
+      "requirement": "src/core/production_main.py (CRITICAL)",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "File",
+      "requirement": "src/analysis/market_regime_detector.py (Optional)",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "File",
+      "requirement": "docs/ETAPE24_TRADER_PREPARATION.md (CRITICAL)",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "File",
+      "requirement": "ETAPE25_STARTUP_CHECKLIST.md (CRITICAL)",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "File",
+      "requirement": "ETAPE25_PHASE1_DAILY_LOG.md (CRITICAL)",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Signal System",
+      "requirement": "Signal generator (gen\u00e8re signaux BUY/SELL)",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Signal System",
+      "requirement": "Feature engineering (indicateurs techniques)",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Signal System",
+      "requirement": "Adaptive strategy (ajuste selon r\u00e9gime)",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Signal System",
+      "requirement": "Market regime detector (BULL/BEAR)",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Risk Mgmt",
+      "requirement": "src/trading/live_trading_config.py exists",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Risk Mgmt",
+      "requirement": "src/trading/position_sizing.py exists",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Risk Mgmt",
+      "requirement": "src/trading/live_monitoring.py exists",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Broker API",
+      "requirement": "src/trading/interactive_brokers.py exists",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Broker API",
+      "requirement": "src/trading/broker_interface.py exists",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Broker API",
+      "requirement": "src/trading/broker_manager.py exists",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Documentation",
+      "requirement": "Trader psychological preparation guide",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Documentation",
+      "requirement": "Phase 1 startup checklist",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Documentation",
+      "requirement": "Daily trading log template",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Documentation",
+      "requirement": "Live trading startup guide",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Data",
+      "requirement": "AAPL historical data available",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Data",
+      "requirement": "GOOGL historical data available",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Data",
+      "requirement": "MSFT historical data available",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Data",
+      "requirement": "TSLA historical data available",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Reports",
+      "requirement": "Reports directory exists",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Reports",
+      "requirement": "Previous reports exist (46 files)",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Project",
+      "requirement": "PROJECT_HISTORY exists",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    },
+    {
+      "component": "Project",
+      "requirement": "PROJECT_HISTORY is recent (0.1 MB)",
+      "status": "\u2713",
+      "severity": "\u2705 PASS"
+    }
+  ]
+}

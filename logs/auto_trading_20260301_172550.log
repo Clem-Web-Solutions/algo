@@ -1,0 +1,14 @@
+17:25:50 | auto_trading | INFO | ======================================================================
+17:25:50 | auto_trading | INFO | AUTOMATED LIVE TRADING SYSTEM - ÉTAPE 26
+17:25:50 | auto_trading | INFO | ======================================================================
+17:25:50 | auto_trading | INFO | Phase: phase_1
+17:25:50 | auto_trading | INFO | Broker: mock
+17:25:50 | auto_trading | INFO | Account: DEMO_ACCOUNT
+17:25:50 | auto_trading | INFO | Capital: $5000.00
+17:25:50 | auto_trading | INFO | Signal interval: 1 minutes
+17:25:50 | auto_trading | INFO | Validating system requirements...
+17:25:50 | auto_trading | INFO | ✓ schedule package installed
+17:25:50 | auto_trading | WARNING | ⚠ ibapi not installed. Paper/Mock trading only.
+17:25:50 | auto_trading | ERROR | ✗ No trained models found in models/ directory
+17:25:50 | auto_trading | ERROR |   Run training first: python src/core/production_main.py
+17:25:50 | auto_trading | ERROR | System validation failed. Cannot continue.
