@@ -6,6 +6,7 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import cross_val_score
+from sklearn.utils.class_weight import compute_sample_weight
 import joblib
 import os
 
@@ -30,6 +31,7 @@ class TradingModel:
                 max_depth=15,
                 min_samples_split=5,
                 min_samples_leaf=2,
+                class_weight='balanced',
                 random_state=42,
                 n_jobs=-1
             )
@@ -52,6 +54,7 @@ class TradingModel:
                 random_state=42,
                 early_stopping=True
             )
+        self.sample_weight = None
         else:
             raise ValueError(f"Model type {model_type} not supported")
     
@@ -70,9 +73,15 @@ class TradingModel:
         """
         print(f"\n[ROBOT] Entrainement du modele ({self.model_type})...")
         print(f"   Donnees: {len(X_train)} echantillons, {X_train.shape[1]} features")
-        
+
+        # Calculer sample weights pour equilibrer les classes (GBM ne supporte pas class_weight)
+        sample_weight = compute_sample_weight('balanced', y_train)
+
         # Entraîner le modèle
-        self.model.fit(X_train, y_train)
+        if self.model_type == 'gradient_boosting':
+            self.model.fit(X_train, y_train, sample_weight=sample_weight)
+        else:
+            self.model.fit(X_train, y_train)
         self.is_trained = True
         
         # Validation croisée

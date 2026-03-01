@@ -219,9 +219,13 @@ class ProductionTradingPipeline:
                 return False
             
             with self.error_handler.error_context("Backtest"):
-                # Obtenir les predictions
-                predictions = self.model.predict(self.X_test)
-                
+                # Obtenir les predictions avec seuil abaisse a 0.45 (evite biais tout-zero)
+                proba = self.model.predict_proba(self.X_test)[:, 1]
+                predictions = (proba >= 0.45).astype(int)
+                n_buy = int(predictions.sum())
+                n_sell = int((predictions == 0).sum())
+                self.logger.info(f"Predictions: {n_buy} BUY / {n_sell} SELL (seuil=0.45)")
+
                 # Creer backtest engine
                 engine = BacktestEngine(**BACKTEST_CONFIG)
                 
