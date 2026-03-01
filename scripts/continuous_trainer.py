@@ -269,7 +269,7 @@ def run_training_cycle(logger, run_once=False):
 
     elapsed = (datetime.now() - cycle_start).total_seconds()
     logger.info(f"\nCycle #{cycle_num} termine en {elapsed:.0f}s")
-    logger.info(f"Prochain cycle: {TRAINER_CONFIG['retrain_time_utc']} UTC")
+    logger.info(f"Prochain cycle dans ~1 minute")
     logger.info("=" * 70)
 
 
@@ -317,12 +317,10 @@ def _main_loop(args, logger):
         run_training_cycle(logger, run_once=True)
         return
 
-    # Mode continu: schedule le retrain quotidien
-    schedule.every().day.at(TRAINER_CONFIG['retrain_time_utc']).do(
-        run_training_cycle, logger=logger
-    )
+    # Mode continu: schedule le retrain toutes les minutes
+    schedule.every(1).minutes.do(run_training_cycle, logger=logger)
 
-    logger.info(f"Scheduler actif. Prochain cycle a {TRAINER_CONFIG['retrain_time_utc']} UTC")
+    logger.info("Scheduler actif. Cycle toutes les 1 minute(s)")
     logger.info("Appuyez sur Ctrl+C pour arreter proprement")
 
     while not shutdown['requested']:
