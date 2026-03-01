@@ -62,6 +62,14 @@ cd "$ALGO_DIR"
 "$VENV_DIR/bin/python3" scripts/continuous_trainer.py --force-now
 echo "[OK] Test reussi"
 
+# --- 6b. Corriger les permissions (le test tourne en root, le service en debian) ---
+echo "[INFO] Correction des permissions..."
+chown -R debian:debian "$ALGO_DIR/data" 2>/dev/null || true
+chown -R debian:debian "$ALGO_DIR/models" 2>/dev/null || true
+chown -R debian:debian "$ALGO_DIR/reports" 2>/dev/null || true
+chmod -R u+rw "$ALGO_DIR/data" 2>/dev/null || true
+echo "[OK] Permissions corrigees"
+
 # --- 7. Demarrer le service ---
 echo "[INFO] Demarrage du service..."
 systemctl start "$SERVICE_NAME"

@@ -286,6 +286,15 @@ def main():
 
     logger = setup_trainer_logger()
 
+    try:
+        _main_loop(args, logger)
+    except Exception as e:
+        logger.critical(f"ERREUR FATALE: {e}", exc_info=True)
+        sys.exit(1)
+
+
+def _main_loop(args, logger):
+
     # Gestion du signal d'arret propre (Ctrl+C ou SIGTERM)
     shutdown = {'requested': False}
 
