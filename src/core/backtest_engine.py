@@ -71,9 +71,9 @@ class BacktestEngine:
                         sma_200 = sma_200.values[0]
                     if not pd.isna(sma_200):
                         sma_200 = float(sma_200)
-                        # Bloquer uniquement si prix > 15% sous SMA_200 (tendance baissière sévère)
+                        # Bloquer uniquement si prix > 20% sous SMA_200 (crash sevère confirmé)
                         price_vs_sma200 = (price - sma_200) / sma_200
-                        trend_ok = price_vs_sma200 > -0.15
+                        trend_ok = price_vs_sma200 > -0.20
             
             # Vérifier Stop Loss et Take Profit si on a une position ouverte
             if self.position > 0:

@@ -219,12 +219,16 @@ class ProductionTradingPipeline:
                 return False
             
             with self.error_handler.error_context("Backtest"):
-                # Obtenir les predictions avec seuil abaisse a 0.45 (evite biais tout-zero)
+                # Seuil adaptatif : 0.45 par defaut, abaisse si modele trop conservateur
                 proba = self.model.predict_proba(self.X_test)[:, 1]
-                predictions = (proba >= 0.45).astype(int)
+                threshold = 0.45
+                if (proba >= threshold).mean() < 0.05:  # moins de 5% de BUY
+                    # Prendre le percentile 80 comme seuil (garantit ~20% de signaux BUY)
+                    threshold = max(0.30, float(np.percentile(proba, 80)))
+                predictions = (proba >= threshold).astype(int)
                 n_buy = int(predictions.sum())
                 n_sell = int((predictions == 0).sum())
-                self.logger.info(f"Predictions: {n_buy} BUY / {n_sell} SELL (seuil=0.45)")
+                self.logger.info(f"Predictions: {n_buy} BUY / {n_sell} SELL (seuil={threshold:.3f})")
 
                 # Creer backtest engine
                 engine = BacktestEngine(**BACKTEST_CONFIG)
