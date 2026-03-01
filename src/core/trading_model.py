@@ -54,9 +54,9 @@ class TradingModel:
                 random_state=42,
                 early_stopping=True
             )
-        self.sample_weight = None
         else:
             raise ValueError(f"Model type {model_type} not supported")
+        self.sample_weight = None
     
     def train(self, X_train, y_train, X_val=None, y_val=None):
         """
