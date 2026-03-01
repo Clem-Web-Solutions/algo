@@ -44,7 +44,12 @@ class BacktestEngine:
             Résultats du backtest
         """
         print("\n[CHART] Lancement du backtest...")
-        
+
+        # Compteurs de diagnostic
+        n_buy_signals = 0
+        n_blocked_by_filter = 0
+        n_no_position = 0
+
         for idx, (date, pred) in enumerate(zip(test_dates, predictions)):
             if date not in data.index:
                 continue
@@ -57,32 +62,18 @@ class BacktestEngine:
             
             signal = int(pred)  # 1 = BUY, 0 = SELL
             
-            # Vérifier trend filter (SMA 200) - mais pas obligatoire en bear market
+            # Vérifier trend filter - filtre souple : bloquer seulement si fort bear (-15% sous SMA_200)
             trend_ok = True
             if self.use_trend_filter and 'SMA_200' in data.columns:
-                sma_200 = data.loc[date, 'SMA_200']
-                if isinstance(sma_200, pd.Series):
-                    sma_200 = sma_200.values[0]
-                sma_200 = float(sma_200) if not pd.isna(sma_200) else None
-                
-                # Ne appliquer le filtre que si on a SMA_200 valide
-                # En bear market, assouplir le filtre - accepter les signaux même sous SMA_200
-                if sma_200 is not None and signal == 1:
-                    # Assouplir: acheter si SMA_20 > SMA_50 (micro-tendance)
-                    sma_20 = data.loc[date, 'SMA_20'] if 'SMA_20' in data.columns else None
-                    sma_50 = data.loc[date, 'SMA_50'] if 'SMA_50' in data.columns else None
-                    
-                    if sma_20 is not None and sma_50 is not None:
-                        if isinstance(sma_20, pd.Series):
-                            sma_20 = sma_20.values[0]
-                        if isinstance(sma_50, pd.Series):
-                            sma_50 = sma_50.values[0]
-                        sma_20 = float(sma_20) if not pd.isna(sma_20) else None
-                        sma_50 = float(sma_50) if not pd.isna(sma_50) else None
-                        trend_ok = (sma_20 is not None and sma_50 is not None and sma_20 > sma_50)
-                    else:
-                        # Si SMAs court-termecoutte pas disponibles, accepter le signal
-                        trend_ok = True
+                if signal == 1:
+                    sma_200 = data.loc[date, 'SMA_200']
+                    if isinstance(sma_200, pd.Series):
+                        sma_200 = sma_200.values[0]
+                    if not pd.isna(sma_200):
+                        sma_200 = float(sma_200)
+                        # Bloquer uniquement si prix > 15% sous SMA_200 (tendance baissière sévère)
+                        price_vs_sma200 = (price - sma_200) / sma_200
+                        trend_ok = price_vs_sma200 > -0.15
             
             # Vérifier Stop Loss et Take Profit si on a une position ouverte
             if self.position > 0:
@@ -99,8 +90,14 @@ class BacktestEngine:
                     self._execute_sell(date, price, reason="Sell Signal")
             
             # BUY signal
-            if signal == 1 and self.position == 0 and trend_ok:
-                self._execute_buy(date, price, reason="Buy Signal")
+            if signal == 1:
+                n_buy_signals += 1
+                if self.position == 0 and trend_ok:
+                    self._execute_buy(date, price, reason="Buy Signal")
+                elif not trend_ok:
+                    n_blocked_by_filter += 1
+                elif self.position > 0:
+                    n_no_position += 1
             
             # Update portfolio value
             if self.position > 0:
@@ -114,7 +111,13 @@ class BacktestEngine:
         if self.position > 0:
             last_price = data.iloc[-1]['Close']
             self._execute_sell(data.index[-1], last_price, reason="Position Close")
-        
+
+        # Diagnostic
+        print(f"[DEBUG] Signaux BUY generés: {n_buy_signals} | "
+              f"Bloques (trend filter): {n_blocked_by_filter} | "
+              f"Deja en position: {n_no_position} | "
+              f"Executes: {len([t for t in self.trades if t['type'] == 'BUY'])}")
+
         return self._generate_report(data.index[0], data.index[-1])
     
     def _execute_buy(self, date, price, reason="Buy Signal"):
