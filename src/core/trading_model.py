@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.neural_network import MLPClassifier
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import TimeSeriesSplit
 from sklearn.utils.class_weight import compute_sample_weight
 import joblib
 import os
@@ -74,24 +74,52 @@ class TradingModel:
         print(f"\n[ROBOT] Entrainement du modele ({self.model_type})...")
         print(f"   Donnees: {len(X_train)} echantillons, {X_train.shape[1]} features")
 
-        # Calculer sample weights pour equilibrer les classes (GBM ne supporte pas class_weight)
+        # Calculer sample weights (sur l'ensemble du train pour le fit final)
         sample_weight = compute_sample_weight('balanced', y_train)
 
-        # Entraîner le modèle
+        # Entraîner le modèle sur l'ensemble du jeu train
         if self.model_type == 'gradient_boosting':
             self.model.fit(X_train, y_train, sample_weight=sample_weight)
         else:
             self.model.fit(X_train, y_train)
         self.is_trained = True
-        
-        # Validation croisée
-        cv_scores = cross_val_score(self.model, X_train, y_train, cv=5, scoring='f1')
-        print(f"   Cross-validation F1-Score: {cv_scores.mean():.4f} (+/- {cv_scores.std():.4f})")
-        
+
+        # ----------------------------------------------------------------
+        # Walk-forward CV avec sample_weight correctement recalculé par fold
+        # ----------------------------------------------------------------
+        # Problème de cross_val_score(fit_params={'sample_weight': w}):
+        # sklearn passe le MÊME vecteur w (taille n) à chaque fold dont le train
+        # a une taille différente → IndexError ou poids incorrects.
+        # Solution: boucle manuelle — sw recalculé sur le fold_train exact.
+        from sklearn.base import clone as _clone
+        from sklearn.metrics import f1_score as _f1
+
+        tscv = TimeSeriesSplit(n_splits=5)
+        cv_f1_scores = []
+        for fold_tr_idx, fold_val_idx in tscv.split(X_train):
+            X_f_tr = X_train.iloc[fold_tr_idx]
+            X_f_val = X_train.iloc[fold_val_idx]
+            y_f_tr = y_train.iloc[fold_tr_idx]
+            y_f_val = y_train.iloc[fold_val_idx]
+
+            fold_model = _clone(self.model)
+            sw_fold = compute_sample_weight('balanced', y_f_tr)
+            try:
+                fold_model.fit(X_f_tr, y_f_tr, sample_weight=sw_fold)
+            except TypeError:
+                fold_model.fit(X_f_tr, y_f_tr)
+
+            y_pred_fold = fold_model.predict(X_f_val)
+            cv_f1_scores.append(_f1(y_f_val, y_pred_fold, zero_division=0))
+
+        cv_scores = np.array(cv_f1_scores)
+        print(f"   Cross-validation F1 (TimeSeriesSplit, sw/fold): "
+              f"{cv_scores.mean():.4f} (+/- {cv_scores.std():.4f})")
+
         # Accuracy d'entraînement
         train_score = self.model.score(X_train, y_train)
         print(f"   Training Accuracy: {train_score:.4f}")
-        
+
         return cv_scores
     
     def predict(self, X):
@@ -131,6 +159,54 @@ class TradingModel:
         
         return metrics
     
+    def evaluate_financial(
+        self,
+        X_test,
+        y_test,
+        close_prices: 'pd.Series',
+        prediction_window: int = 5,
+        threshold: float = 0.5,
+        commission_pct: float = 0.1,
+        slippage_pct: float = 0.05,
+    ) -> dict:
+        """
+        Évalue le modèle avec des métriques financières (Sharpe, profit factor, expectancy).
+
+        Contrairement à evaluate() (F1, AUC), cette méthode calcule ce qui compte
+        réellement en trading: la profitabilité nette des signaux générés.
+
+        Args:
+            X_test           : Features de test (DataFrame avec index datetime)
+            y_test           : Labels réels (non utilisés pour le sizing — juste pour comparaison)
+            close_prices     : Série Close originale (même index que X_test)
+            prediction_window: Fenêtre forward en jours
+            threshold        : Seuil de probabilité pour déclencher BUY
+            commission_pct   : Commission aller+retour totale en %
+            slippage_pct     : Slippage aller+retour total en %
+
+        Returns:
+            Dict avec: sharpe, profit_factor, expectancy, win_rate, n_trades, ...
+        """
+        try:
+            from ml_optimizer import compute_financial_metrics, _compute_forward_returns
+        except ImportError:
+            from .ml_optimizer import compute_financial_metrics, _compute_forward_returns
+
+        probas = self.predict_proba(X_test)[:, 1]
+        predictions = (probas >= threshold).astype(int)
+
+        # Retours forward pour les dates de test
+        fwd_returns = _compute_forward_returns(close_prices, X_test.index, prediction_window)
+
+        # Filtrer les NaN (fin de série)
+        valid = ~np.isnan(fwd_returns)
+        if valid.sum() < 2:
+            return {}
+
+        return compute_financial_metrics(
+            predictions[valid], fwd_returns[valid], commission_pct, slippage_pct
+        )
+
     def get_feature_importance(self, X_columns):
         """Retourne l'importance de chaque feature"""
         if not hasattr(self.model, 'feature_importances_'):

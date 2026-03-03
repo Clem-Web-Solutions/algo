@@ -14,6 +14,7 @@ Utilisation:
 """
 
 import sys
+import json
 import argparse
 import pandas as pd
 import numpy as np
@@ -41,7 +42,7 @@ class SignalGenerator:
     def __init__(self, ticker='AAPL', use_model=True):
         """
         Initialise le générateur de signaux
-        
+
         Args:
             ticker: Code action (AAPL, MSFT, GOOGL, TSLA)
             use_model: Utiliser le modèle ML (True pour live trading)
@@ -49,12 +50,19 @@ class SignalGenerator:
         self.ticker = ticker
         self.use_model = use_model
         self.model = None
+        self.scaler = None
+        self.feature_cols = None  # Liste exacte des colonnes vues lors de l'entraînement
+        # Chercher d'abord le modèle gradient_boosting (gb), puis fallback générique
         self.model_path = project_root / 'models' / f'model_{ticker}_gb.pkl'
+        if not self.model_path.exists():
+            self.model_path = project_root / 'models' / f'model_{ticker}.pkl'
+        self.scaler_path = project_root / 'models' / f'scaler_{ticker}.pkl'
+        self.features_path = project_root / 'models' / f'features_{ticker}.json'
         self.feature_eng = FeatureEngineering()
         self.regime_detector = MarketRegimeDetector()
         self.data_fetcher = DataFetcher()
-        
-        # Charger le modèle s'il existe
+
+        # Charger le modèle, le scaler et la liste de features — les trois doivent être cohérents
         if use_model and self.model_path.exists():
             try:
                 self.model = joblib.load(str(self.model_path))
@@ -62,6 +70,27 @@ class SignalGenerator:
             except Exception as e:
                 print(f"[WARNING] Erreur chargement modele: {e}")
                 self.model = None
+
+        if self.scaler_path.exists():
+            try:
+                self.scaler = joblib.load(str(self.scaler_path))
+                print(f"[OK] Scaler charge: {self.scaler_path.name}")
+            except Exception as e:
+                print(f"[WARNING] Erreur chargement scaler: {e}")
+                self.scaler = None
+        else:
+            print(f"[WARNING] Scaler absent ({self.scaler_path.name}) - features non normalisees")
+
+        if self.features_path.exists():
+            try:
+                with open(str(self.features_path), 'r') as f:
+                    self.feature_cols = json.load(f)
+                print(f"[OK] Features chargees: {len(self.feature_cols)} colonnes")
+            except Exception as e:
+                print(f"[WARNING] Erreur chargement features: {e}")
+                self.feature_cols = None
+        else:
+            print(f"[WARNING] features_{ticker}.json absent - sera utilise apres le prochain retrain")
         
     def fetch_live_data(self, lookback_days=250):
         """
@@ -135,16 +164,30 @@ class SignalGenerator:
             regime_confidence = regime_info.get('confidence', 0.0)
             
             # 4. Préparer les features pour le modèle
-            required_features = [
-                'SMA_5', 'SMA_10', 'SMA_20', 'SMA_50', 'SMA_200',
-                'EMA_12', 'EMA_26', 'MACD', 'Signal', 'MACD_Hist',
-                'RSI', 'STOCH_K', 'STOCH_D', 'ATR', 'ADX',
-                'AO', 'CCI', 'BB_Position', 'Volume_SMA_Ratio'
-            ]
-            
-            # Vérifier que les features existent
-            available_features = [f for f in required_features if f in data_with_features.columns]
-            
+            # Utiliser la liste exacte des colonnes vues lors de l'entraînement (si disponible)
+            # Sinon fallback sur les features standard connues
+            if self.feature_cols is not None:
+                target_cols = self.feature_cols
+            else:
+                # Fallback si features_{ticker}.json absent (migration ou premier run).
+                # IMPORTANT: doit rester synchronisé avec prepare_training_data._excluded.
+                # Iter 6: MACD/Signal/MACD_Hist/ATR/AO (absolus, proportionnels au prix)
+                # remplacés par MACD_ATR, MACD_Hist_ATR, ATR_pct, AO_ATR, Volatility_20d
+                target_cols = [
+                    'MACD_ATR', 'MACD_Hist_ATR', 'ATR_pct', 'AO_ATR',
+                    'BB_Width', 'BB_Position',
+                    'RSI', '+DI', '-DI', 'ADX',
+                    'STOCH_K', 'STOCH_D',
+                    'Volume_SMA_Ratio',
+                    'Price_Change_1d', 'Price_Change_5d', 'Price_Change_20d',
+                    'CCI', 'ROC', 'OBV', 'R%',
+                    'Volatility_20d',
+                    'SMA_5_r', 'SMA_10_r', 'SMA_20_r', 'SMA_50_r', 'SMA_200_r',
+                    'EMA_12_r', 'EMA_26_r',
+                ]
+
+            available_features = [f for f in target_cols if f in data_with_features.columns]
+
             if len(available_features) < 10:
                 return {
                     'signal': 'HOLD',
@@ -152,15 +195,26 @@ class SignalGenerator:
                     'regime': regime,
                     'probability': 0.5,
                     'timestamp': datetime.now(),
-                    'error': f'Features insuffisantes: {len(available_features)}/{len(required_features)}'
+                    'error': f'Features insuffisantes: {len(available_features)}/{len(target_cols)}'
                 }
-            
-            # 5. Obtenir la dernière ligne avec les features
-            latest = data_with_features.iloc[-1:][available_features]
-            
-            # Vérifier les NaN
+
+            # 5. Construire le vecteur de features dans l'ordre exact du training
+            latest = data_with_features.iloc[-1:][available_features].copy()
+
+            # Remplir les NaN par la dernière valeur connue (ffill) — pas de bfill (données futures)
             if latest.isnull().sum().sum() > 0:
-                latest = latest.fillna(method='bfill').fillna(method='ffill')
+                # ffill sur la fenêtre complète puis prendre la dernière ligne
+                latest = data_with_features[available_features].ffill().iloc[-1:].copy()
+
+            # Normaliser avec le scaler entraîné — doit avoir exactement les mêmes colonnes
+            if self.scaler is not None:
+                try:
+                    latest_values = self.scaler.transform(latest)
+                    latest = pd.DataFrame(latest_values, columns=latest.columns, index=latest.index)
+                except ValueError as e:
+                    print(f"[WARNING] Scaler incompatible ({e}) - retrain necessaire - features brutes utilisees")
+                except Exception as e:
+                    print(f"[WARNING] Erreur normalisation scaler: {e} - features brutes utilisees")
             
             # 6. Générer le signal avec le modèle si disponible
             if self.model is not None:

@@ -42,12 +42,14 @@ TRAINER_CONFIG = {
     'state_file': str(project_root / 'data' / 'trainer_state.json'),
 
     # Walk-forward: avance la fenetre de test de N jours a chaque cycle
-    # Le modele explore differentes periodes de marche (bull, bear, conso)
-    # et l'adaptation des params a de vrais effets mesurables
     'walk_forward': {
         'enabled': True,
         # Pas d'avancement par cycle (jours)
         'step_days': 14,
+        # Taille maximale de la fenetre d'entrainement en jours (fenetre glissante)
+        # Evite que les donnees recentes ecrasent progressivement les regimes historiques.
+        # None = fenetre illimitee (comportement legacy)
+        'max_train_days': 730,  # ~2 ans
     },
 
     # Seuils d'adaptation automatique
@@ -177,6 +179,19 @@ def adapt_ticker_params(ticker: str, state: dict, logger) -> dict:
                         f"-> signal_threshold assoupli {current} -> {new_val}")
             changed = True
 
+        # Relâcher aussi le stop_loss si serré par les cycles précédents.
+        # Sans ce relâchement, le SL reste bloqué à -1.0% indéfiniment même après
+        # une bonne série, sous-performant en marché haussier.
+        current_sl = overrides.get('stop_loss_pct', -2.0)
+        default_sl = -2.0
+        if current_sl > default_sl:  # sl a été serré (plus proche de 0)
+            new_sl = max(default_sl, round(current_sl - 0.5, 1))  # relâche vers le défaut
+            if new_sl != current_sl:
+                overrides['stop_loss_pct'] = new_sl
+                logger.info(f"  [{ticker}] ADAPTATION: excellente perf "
+                            f"-> stop_loss relâché {current_sl}% -> {new_sl}%")
+                changed = True
+
     if not changed:
         logger.info(f"  [{ticker}] Pas d'adaptation necessaire")
 
@@ -193,9 +208,26 @@ def run_training_cycle(logger, run_once=False):
     # Import ici pour eviter les imports circulaires au demarrage
     from production_main import ProductionTradingPipeline
     from config import START_DATE
+    from resilience import PositionStateManager
 
     state_file = TRAINER_CONFIG['state_file']
     state = load_state(state_file)
+
+    # --- Vérification des positions orphelines (détection post-crash) ---
+    pos_manager = PositionStateManager(
+        str(project_root / 'data' / 'position_state.json'),
+        orphan_hours=24.0,
+    )
+    if pos_manager.has_orphan_positions():
+        logger.warning("=" * 70)
+        logger.warning("POSITIONS ORPHELINES DETECTEES (crash ou arret inattendu precedent?)")
+        for ticker, pos in pos_manager.get_all_positions().items():
+            logger.warning(
+                f"  {ticker}: qty={pos['quantity']:.4f} @ {pos['entry_price']:.2f} "
+                f"depuis {pos['entry_date']} (sauvegarde: {pos.get('saved_at', '?')})"
+            )
+        logger.warning("Action requise: verifier manuellement ces positions avant de continuer.")
+        logger.warning("=" * 70)
 
     cycle_num = state['total_cycles'] + 1
     cycle_start = datetime.now()
@@ -209,11 +241,22 @@ def run_training_cycle(logger, run_once=False):
         wf_end_date = today_str
     walk_forward_active = wf_end_date < today_str
 
+    # Fenetre glissante : limiter le debut du train pour eviter que les donnees
+    # recentes ne dominent progressivement (resistance aux changements de regime)
+    max_train_days = wf_cfg.get('max_train_days', None)
+    if max_train_days is not None:
+        wf_end_dt = datetime.strptime(wf_end_date, '%Y-%m-%d')
+        earliest_start = (wf_end_dt - timedelta(days=max_train_days)).strftime('%Y-%m-%d')
+        effective_start_date = max(START_DATE, earliest_start)
+    else:
+        effective_start_date = START_DATE
+
     logger.info("=" * 70)
     logger.info(f"CYCLE #{cycle_num} - {cycle_start.strftime('%Y-%m-%d %H:%M:%S')}")
-    logger.info("Fenetre donnees: {} -> {} [{}]".format(
-        START_DATE, wf_end_date,
-        "walk-forward" if walk_forward_active else "live"
+    logger.info("Fenetre donnees: {} -> {} [{}{}]".format(
+        effective_start_date, wf_end_date,
+        "walk-forward" if walk_forward_active else "live",
+        f" | fenetre={max_train_days}j" if max_train_days else ""
     ))
     logger.info("=" * 70)
 
@@ -245,7 +288,7 @@ def run_training_cycle(logger, run_once=False):
             pipeline._stop_loss_override = overrides.get('stop_loss_pct', None)
 
             success = pipeline.run_complete_pipeline(
-                start_date=START_DATE,
+                start_date=effective_start_date,
                 end_date=wf_end_date if walk_forward_active else None
             )
 
@@ -360,10 +403,13 @@ def _main_loop(args, logger):
         run_training_cycle(logger, run_once=True)
         return
 
-    # Mode continu: schedule le retrain toutes les minutes
-    schedule.every(1).minutes.do(run_training_cycle, logger=logger)
+    # Mode continu: schedule le retrain à l'heure configurée (22h UTC par défaut)
+    # retrain_time_utc était défini dans TRAINER_CONFIG mais jamais utilisé —
+    # le scheduler tournait toutes les minutes, ignorant la config.
+    retrain_time = TRAINER_CONFIG.get('retrain_time_utc', '22:00')
+    schedule.every().day.at(retrain_time).do(run_training_cycle, logger=logger)
 
-    logger.info("Scheduler actif. Cycle toutes les 1 minute(s)")
+    logger.info(f"Scheduler actif. Cycle quotidien à {retrain_time} UTC")
     logger.info("Appuyez sur Ctrl+C pour arreter proprement")
 
     while not shutdown['requested']:

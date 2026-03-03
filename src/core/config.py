@@ -132,6 +132,23 @@ BACKTEST_CONFIG = {
 
 
 # ============================================================================
+# RESILIENCE CONFIG
+# ============================================================================
+RESILIENCE_CONFIG = {
+    'retry_attempts': 5,
+    'retry_base_delay_s': 2.0,
+    'retry_max_delay_s': 120.0,
+    'rate_limit_interval_s': 0.5,
+    'circuit_breaker_vol_threshold': 0.80,
+    'circuit_breaker_daily_loss_limit': -0.05,
+    'circuit_breaker_recovery_s': 3600.0,
+    'slippage_pct': 0.05,
+    'position_state_file': str(DATA_DIR / 'position_state.json'),
+    'orphan_position_hours': 24,
+}
+
+
+# ============================================================================
 # STRATEGIE ADAPTATIVE (parametres par defaut)
 # ============================================================================
 STRATEGY_CONFIG = {

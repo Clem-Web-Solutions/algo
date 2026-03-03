@@ -422,18 +422,35 @@ class AdaptiveStrategy:
             
             # Ne trader que si on est dans le régime cible
             if current_regime == target_regime:
-                # Simuler le trade (simplifié)
                 price = float(data.loc[date, 'Close'])
                 signal = int(pred)
-                
-                # Logique simplifiée de scoring
+
                 if signal == 1:  # BUY
-                    # Simuler un trade gagnant ou perdant basé sur le momentum
-                    future_return = data['Close'].pct_change().shift(-1).loc[date]
-                    if not pd.isna(future_return):
+                    # Simuler un trade sur prediction_window jours (approximation sans lookahead d+1)
+                    # On utilise le return sur 5j suivants avec SL/TP appliqués
+                    sl = params.get('stop_loss_pct', -2.0) / 100.0
+                    tp = params.get('take_profit_pct', 5.0) / 100.0
+                    simulated_return = 0.0
+                    for fwd in range(1, 6):  # 5 jours suivants
+                        future_prices = data['Close'].iloc[
+                            data.index.get_loc(date) + 1:
+                            data.index.get_loc(date) + fwd + 1
+                        ]
+                        if len(future_prices) == 0:
+                            break
+                        future_price = float(future_prices.iloc[-1])
+                        pnl = (future_price - price) / price
+                        if pnl <= sl:
+                            simulated_return = sl * 100
+                            break
+                        elif pnl >= tp:
+                            simulated_return = tp * 100
+                            break
+                        simulated_return = pnl * 100
+                    if simulated_return != 0.0 or fwd > 0:
                         regime_trades.append({
-                            'return': future_return * 100,
-                            'win': future_return > 0
+                            'return': simulated_return,
+                            'win': simulated_return > 0
                         })
         
         # Calculer le score
@@ -565,21 +582,25 @@ class AdaptiveStrategy:
         """
         adjusted = base_params.copy()
         
-        # Si confiance faible, être plus conservateur
+        base_sl = base_params.get('stop_loss_pct', -2.0)
+        base_tp = base_params.get('take_profit_pct', 5.0)
+        base_thresh = base_params.get('signal_threshold', 0.50)
+
+        # Priorité 1 — Confiance faible : protection maximale (indépendant de la volatilité)
         if confidence < 0.3:
-            adjusted['stop_loss_pct'] = base_params.get('stop_loss_pct', -2.0) * 0.7  # Plus strict
-            adjusted['take_profit_pct'] = base_params.get('take_profit_pct', 5.0) * 0.8  # Profit plus modeste
-            adjusted['signal_threshold'] = min(base_params.get('signal_threshold', 0.50) + 0.1, 0.70)
-        
-        # Si volatilité élevée, ajuster les SL/TP
-        if volatility > 30:
-            # Étendre les ranges pour éviter les stop prématurés
-            adjusted['stop_loss_pct'] = base_params.get('stop_loss_pct', -2.0) * 1.5  # Moins strict
-            adjusted['take_profit_pct'] = base_params.get('take_profit_pct', 5.0) * 1.3  # Profit plus ambitieux
-        
-        # Si confiance très haute et volatilité modérée, être plus agressif
-        if confidence > 0.7 and volatility < 20:
-            adjusted['stop_loss_pct'] = base_params.get('stop_loss_pct', -2.0) * 1.2  # Moins strict
-            adjusted['take_profit_pct'] = base_params.get('take_profit_pct', 5.0) * 1.2  # Profit plus ambitieux
+            adjusted['stop_loss_pct'] = base_sl * 0.7   # Plus strict (valeur moins négative)
+            adjusted['take_profit_pct'] = base_tp * 0.8
+            adjusted['signal_threshold'] = min(base_thresh + 0.1, 0.70)
+
+        # Priorité 2 — Volatilité élevée AVEC confiance suffisante : élargir les ranges
+        elif volatility > 30:
+            # En haute volatilité, les stops trop serrés se font déclencher prématurément
+            adjusted['stop_loss_pct'] = base_sl * 1.5   # Plus large (valeur plus négative)
+            adjusted['take_profit_pct'] = base_tp * 1.3
+
+        # Priorité 3 — Confiance haute et volatilité modérée : mode légèrement agressif
+        elif confidence > 0.7 and volatility < 20:
+            adjusted['stop_loss_pct'] = base_sl * 1.2
+            adjusted['take_profit_pct'] = base_tp * 1.2
         
         return adjusted

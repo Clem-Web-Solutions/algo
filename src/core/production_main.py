@@ -12,8 +12,10 @@ sys.path.insert(0, str(project_root / 'src' / 'core'))
 sys.path.insert(0, str(project_root / 'src' / 'strategies'))
 sys.path.insert(0, str(project_root / 'src' / 'analysis'))
 
+import json
 import pandas as pd
 import numpy as np
+import joblib
 from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
@@ -157,7 +159,14 @@ class ProductionTradingPipeline:
         try:
             with self.error_handler.error_context("Regime detection"):
                 detector = MarketRegimeDetector()
-                self.regime_history = detector.get_regime_history(self.data)
+                # Passer periods=len(data) pour couvrir l'ensemble de l'historique.
+                # Avec periods=60 (défaut), le regime_history ne couvre que les 60 derniers
+                # jours, alors que test_dates[0] est ~20% des données en arrière (>100 jours).
+                # train_regimes deviendrait vide → dominant_regime calculé sur la période de
+                # TEST → lookahead réintroduit silencieusement (annulation du fix P7 Iter 1).
+                self.regime_history = detector.get_regime_history(
+                    self.data, periods=len(self.data)
+                )
             
             if self.regime_history is not None:
                 regimes = self.regime_history['regime'].value_counts()
@@ -192,11 +201,27 @@ class ProductionTradingPipeline:
                 # Entraîner le modele
                 self.model = TradingModel(model_type=model_type)
                 self.model.train(X_train, y_train, X_val=X_test, y_val=y_test)
-                
-                # Sauvegarder le modele sur disque
+
+                # Sauvegarder le modele, le scaler et la liste exacte des features
+                # Les trois fichiers doivent être en phase pour le live trading
                 model_path = str(project_root / 'models' / f'model_{self.ticker}.pkl')
+                scaler_path = str(project_root / 'models' / f'scaler_{self.ticker}.pkl')
+                features_path = str(project_root / 'models' / f'features_{self.ticker}.json')
                 self.model.save(model_path)
-                
+                joblib.dump(scaler, scaler_path)
+                with open(features_path, 'w') as f:
+                    json.dump(list(X_train.columns), f)
+                self.logger.info(f"OK - Scaler + features ({len(X_train.columns)} cols) sauvegardes")
+
+                # Validation interne (derniers 20% du train) pour threshold optimization et Kelly.
+                # On NE touche pas X_test — cet ensemble reste vierge jusqu'au backtest final.
+                val_split_idx = int(len(X_train) * 0.80)
+                self._X_val = X_train.iloc[val_split_idx:]
+                self._y_val = y_train.iloc[val_split_idx:]
+
+                # Série Close complète (non scalée) pour calculer les retours forward
+                self._close_prices_full = self.data['Close'].copy()
+
                 # Sauvegarder pour backtest
                 self.X_test = X_test
                 self.y_test = y_test
@@ -219,10 +244,19 @@ class ProductionTradingPipeline:
                 return False
             
             with self.error_handler.error_context("Backtest"):
-                # Determiner le regime dominant sur la periode de test
+                # Determiner le regime dominant sur la periode d'ENTRAINEMENT uniquement
+                # (évite le lookahead : ne pas utiliser le régime de la période de test pour choisir les params)
                 dominant_regime = 'UNKNOWN'
                 if self.regime_history is not None and len(self.regime_history) > 0:
-                    dominant_regime = self.regime_history['regime'].value_counts().index[0]
+                    train_cutoff = self.test_dates[0] if self.test_dates is not None and len(self.test_dates) > 0 else None
+                    if train_cutoff is not None:
+                        train_regimes = self.regime_history[self.regime_history['date'] < train_cutoff]
+                        if len(train_regimes) > 0:
+                            dominant_regime = train_regimes['regime'].value_counts().index[0]
+                        else:
+                            dominant_regime = self.regime_history['regime'].value_counts().index[0]
+                    else:
+                        dominant_regime = self.regime_history['regime'].value_counts().index[0]
 
                 # Recuperer les parametres adaptatifs pour ce regime
                 adaptive_params = AdaptiveStrategy.STRATEGY_PARAMS.get(
@@ -235,21 +269,88 @@ class ProductionTradingPipeline:
                                  f"TP={adaptive_params['take_profit_pct']}% / "
                                  f"seuil_base={signal_threshold_base}")
 
-                # Seuil adaptatif : regime comme base, fallback si trop peu de BUY
+                # ----------------------------------------------------------------
+                # Optimisation du seuil + Kelly sur les données de VALIDATION
+                # (validation = derniers 20% du train — X_test reste vierge)
+                # ----------------------------------------------------------------
+                try:
+                    from ml_optimizer import (
+                        optimize_signal_threshold, fractional_kelly,
+                        compute_financial_metrics, _compute_forward_returns,
+                    )
+                except ImportError:
+                    from .ml_optimizer import (
+                        optimize_signal_threshold, fractional_kelly,
+                        compute_financial_metrics, _compute_forward_returns,
+                    )
+
+                prediction_window = 5
+                optimal_threshold = signal_threshold_base  # fallback si val indisponible
+                kelly_position_pct = BACKTEST_CONFIG['position_size_pct']  # fallback
+                val_fin_metrics = {}
+
+                if hasattr(self, '_X_val') and self._X_val is not None and len(self._X_val) >= 10:
+                    val_probas = self.model.predict_proba(self._X_val)[:, 1]
+                    val_fwd = _compute_forward_returns(
+                        self._close_prices_full, self._X_val.index, prediction_window
+                    )
+                    valid_mask = ~np.isnan(val_fwd)
+                    if valid_mask.sum() >= 5:
+                        optimal_threshold, thr_df = optimize_signal_threshold(
+                            val_probas[valid_mask], val_fwd[valid_mask],
+                            commission_pct=0.1, slippage_pct=0.05,
+                        )
+                        val_preds_opt = (val_probas[valid_mask] >= optimal_threshold).astype(int)
+                        val_fin_metrics = compute_financial_metrics(
+                            val_preds_opt, val_fwd[valid_mask]
+                        )
+                        kelly_position_pct = fractional_kelly(
+                            win_rate=val_fin_metrics.get('win_rate', 0.5),
+                            avg_win_pct=val_fin_metrics.get('avg_win_pct', 1.0),
+                            avg_loss_pct=val_fin_metrics.get('avg_loss_pct', -1.0),
+                            fraction=0.25,
+                        )
+                        self.logger.info(
+                            f"[MLOpt] Seuil optimal (validation): {optimal_threshold:.3f} | "
+                            f"Sharpe={val_fin_metrics.get('sharpe', 0):.3f} | "
+                            f"PF={val_fin_metrics.get('profit_factor', 0):.3f} | "
+                            f"Exp={val_fin_metrics.get('expectancy', 0):.3f}%"
+                        )
+                        self.logger.info(
+                            f"[MLOpt] Kelly (quarter-fraction): {kelly_position_pct:.3f} | "
+                            f"WR={val_fin_metrics.get('win_rate', 0):.1%}"
+                        )
+                    else:
+                        self.logger.warning("[MLOpt] Validation trop courte — seuil régime utilisé en fallback")
+                else:
+                    self.logger.warning("[MLOpt] Pas de données de validation — seuil régime utilisé en fallback")
+
+                # Seuil final: threshold optimisé > override trainer > fallback régime
+                threshold = optimal_threshold
+                if hasattr(self, '_signal_threshold_override') and self._signal_threshold_override is not None:
+                    threshold = self._signal_threshold_override
+                    self.logger.info(f"[Trainer] Seuil override actif: {threshold:.3f}")
+
                 proba = self.model.predict_proba(self.X_test)[:, 1]
-                threshold = signal_threshold_base
-                if (proba >= threshold).mean() < 0.04:  # moins de 4% de BUY
-                    threshold = max(0.30, float(np.percentile(proba, 80)))
                 predictions = (proba >= threshold).astype(int)
                 n_buy = int(predictions.sum())
                 n_sell = int((predictions == 0).sum())
-                self.logger.info(f"Predictions: {n_buy} BUY / {n_sell} SELL (seuil={threshold:.3f})")
+                buy_pct = n_buy / max(len(predictions), 1)
+                self.logger.info(f"Predictions: {n_buy} BUY ({buy_pct:.1%}) / {n_sell} SELL (seuil={threshold:.3f})")
+                if buy_pct < 0.02:
+                    self.logger.warning(f"Peu de signaux BUY ({buy_pct:.1%}) — régime {dominant_regime} probablement défensif (normal)")
 
-                # Creer backtest engine avec parametres adaptatifs
+                # Appliquer l'override stop_loss du continuous_trainer si présent
+                effective_sl = adaptive_params['stop_loss_pct']
+                if hasattr(self, '_stop_loss_override') and self._stop_loss_override is not None:
+                    effective_sl = self._stop_loss_override
+                    self.logger.info(f"Stop loss override actif: {effective_sl}% (vs base {adaptive_params['stop_loss_pct']}%)")
+
+                # Creer backtest engine avec Kelly position sizing
                 engine = BacktestEngine(
                     initial_capital=BACKTEST_CONFIG['initial_capital'],
-                    position_size_pct=BACKTEST_CONFIG['position_size_pct'],
-                    stop_loss_pct=adaptive_params['stop_loss_pct'],
+                    position_size_pct=kelly_position_pct,  # Kelly fractionnel (25%)
+                    stop_loss_pct=effective_sl,
                     take_profit_pct=adaptive_params['take_profit_pct'],
                     use_trend_filter=adaptive_params['use_trend_filter'],
                 )
@@ -264,6 +365,15 @@ class ProductionTradingPipeline:
                 )
             
             if self.backtest_results:
+                # Enrichir les résultats avec les métriques de validation et le sizing utilisé
+                self.backtest_results.update({
+                    'optimal_threshold': threshold,
+                    'kelly_position_size': kelly_position_pct,
+                    'val_sharpe': val_fin_metrics.get('sharpe', None),
+                    'val_profit_factor': val_fin_metrics.get('profit_factor', None),
+                    'val_expectancy': val_fin_metrics.get('expectancy', None),
+                    'val_win_rate': val_fin_metrics.get('win_rate', None),
+                })
                 self.logger.info("OK - Backtest complete")
                 self._log_backtest_results()
                 return True
@@ -288,7 +398,18 @@ class ProductionTradingPipeline:
         self.logger.info(f"Taux reussite: {results.get('win_rate', 0):.1f}%")
         self.logger.info(f"Profit moyen: ${results.get('avg_profit', 0):.2f}")
         self.logger.info(f"Max drawdown: {results.get('max_drawdown', 0):.2f}%")
+        self.logger.info(f"Sharpe ratio: {results.get('sharpe_ratio', 0):.3f}")
+        self.logger.info(f"Commissions: ${results.get('total_commissions', 0):.2f}")
         self.logger.info(f"Capital final: ${results.get('final_value', 0):.2f}")
+        # Métriques de validation (signal de qualité du modèle avant test)
+        if results.get('val_sharpe') is not None:
+            self.logger.info(
+                f"[Validation] Sharpe={results.get('val_sharpe', 0):.3f} | "
+                f"PF={results.get('val_profit_factor', 0):.3f} | "
+                f"Exp={results.get('val_expectancy', 0):.3f}% | "
+                f"Seuil={results.get('optimal_threshold', 0):.3f} | "
+                f"Kelly={results.get('kelly_position_size', 0):.3f}"
+            )
     
     def save_report(self):
         """Sauvegarde rapport execution"""
@@ -305,12 +426,24 @@ class ProductionTradingPipeline:
                 f.write(f"Log file: {self.log_file}\n\n")
                 
                 if self.backtest_results:
+                    r = self.backtest_results
                     f.write("[BACKTEST RESULTS]\n")
-                    f.write(f"Rendement: {self.backtest_results.get('total_return_pct', 0):.2f}%\n")
-                    f.write(f"Trades: {self.backtest_results.get('buy_trades', 0)} achats / {self.backtest_results.get('sell_trades', 0)} ventes\n")
-                    f.write(f"Win Rate: {self.backtest_results.get('win_rate', 0):.1f}%\n")
-                    f.write(f"Drawdown: {self.backtest_results.get('max_drawdown', 0):.2f}%\n")
-                    f.write(f"Capital final: ${self.backtest_results.get('final_value', 0):.2f}\n")
+                    f.write(f"Rendement: {r.get('total_return_pct', 0):.2f}%\n")
+                    f.write(f"Trades: {r.get('buy_trades', 0)} achats / {r.get('sell_trades', 0)} ventes\n")
+                    f.write(f"Win Rate: {r.get('win_rate', 0):.1f}%\n")
+                    f.write(f"Drawdown Max: {r.get('max_drawdown', 0):.2f}%\n")
+                    f.write(f"Sharpe Ratio: {r.get('sharpe_ratio', 0):.3f}\n")
+                    f.write(f"Commissions totales: ${r.get('total_commissions', 0):.2f}\n")
+                    f.write(f"Slippage total: ${r.get('total_slippage', 0):.2f}\n")
+                    f.write(f"Capital final: ${r.get('final_value', 0):.2f}\n")
+                    f.write(f"\n[ML OPTIMIZER — VALIDATION]\n")
+                    f.write(f"Seuil optimal: {r.get('optimal_threshold', 'N/A')}\n")
+                    f.write(f"Kelly sizing: {r.get('kelly_position_size', 'N/A')}\n")
+                    if r.get('val_sharpe') is not None:
+                        f.write(f"Sharpe validation: {r.get('val_sharpe', 0):.3f}\n")
+                        f.write(f"Profit factor validation: {r.get('val_profit_factor', 0):.3f}\n")
+                        f.write(f"Expectancy validation: {r.get('val_expectancy', 0):.3f}%\n")
+                        f.write(f"Win rate validation: {r.get('val_win_rate', 0):.1%}\n")
                 
                 f.write(f"\n[ERRORS]\n")
                 f.write(f"Total errors: {self.error_handler.error_count}\n")
