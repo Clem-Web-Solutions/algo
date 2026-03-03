@@ -162,6 +162,10 @@ def adapt_ticker_params(ticker: str, state: dict, logger) -> dict:
     # --- Rendement negatif persistant : serrer le stop loss ---
     if avg_return < cfg['min_return_pct'] and len(recent) >= 3:
         current_sl = overrides.get('stop_loss_pct', -2.0)
+        # Guard: valeur corrompue (positive) -> reset au défaut avant d'ajuster
+        if current_sl > 0:
+            logger.warning(f"  [{ticker}] [Guard SL] Valeur corrompue ({current_sl}%) reset à -2.0%")
+            current_sl = -2.0
         new_sl = max(-1.0, round(current_sl + 0.5, 1))   # moins negatif = plus serré
         if new_sl != current_sl:
             overrides['stop_loss_pct'] = new_sl
@@ -183,6 +187,9 @@ def adapt_ticker_params(ticker: str, state: dict, logger) -> dict:
         # Sans ce relâchement, le SL reste bloqué à -1.0% indéfiniment même après
         # une bonne série, sous-performant en marché haussier.
         current_sl = overrides.get('stop_loss_pct', -2.0)
+        # Guard: valeur corrompue -> reset
+        if current_sl > 0:
+            current_sl = -2.0
         default_sl = -2.0
         if current_sl > default_sl:  # sl a été serré (plus proche de 0)
             new_sl = max(default_sl, round(current_sl - 0.5, 1))  # relâche vers le défaut

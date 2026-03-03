@@ -365,7 +365,15 @@ class ProductionTradingPipeline:
                 # Appliquer l'override stop_loss du continuous_trainer si présent
                 effective_sl = adaptive_params['stop_loss_pct']
                 if hasattr(self, '_stop_loss_override') and self._stop_loss_override is not None:
-                    effective_sl = self._stop_loss_override
+                    override_val = self._stop_loss_override
+                    # Guard: valeur corrompue (positive) -> reset au défaut -2.0%
+                    if override_val > 0:
+                        self.logger.warning(
+                            f"[Guard SL] Override stop_loss corrompu ({override_val}%) "
+                            f"— reset à -2.0% (doit être négatif)"
+                        )
+                        override_val = -2.0
+                    effective_sl = override_val
                     self.logger.info(f"Stop loss override actif: {effective_sl}% (vs base {adaptive_params['stop_loss_pct']}%)")
 
                 # Creer backtest engine avec Kelly position sizing
@@ -397,6 +405,17 @@ class ProductionTradingPipeline:
                     'val_expectancy': val_fin_metrics.get('expectancy', None),
                     'val_win_rate': val_fin_metrics.get('win_rate', None),
                 })
+                # Gate Backtest Return: si return < 0 et WR < 48% -> cycle raté
+                bt_return = self.backtest_results.get('total_return_pct', 0)
+                bt_wr = self.backtest_results.get('win_rate', 0)
+                if bt_return < 0 and bt_wr < 0.48:
+                    self.logger.warning(
+                        f"[Gate BT] Return={bt_return:.2f}% < 0 & WR={bt_wr:.1%} < 48% "
+                        f"— résultats rejetés (modèle non profitable sur la période de test)"
+                    )
+                    self.backtest_results = None
+                    return False
+
                 self.logger.info("OK - Backtest complete")
                 self._log_backtest_results()
                 return True
