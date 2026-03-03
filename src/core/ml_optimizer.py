@@ -131,7 +131,7 @@ def optimize_signal_threshold(
         metrics_df classé par Sharpe décroissant — utile pour diagnostics
     """
     if thresholds is None:
-        thresholds = np.arange(0.30, 0.72, 0.02)
+        thresholds = np.arange(0.45, 0.72, 0.02)  # min 0.45 : évite les seuils trop bas (sur-optimisation)
 
     results = []
     for thr in thresholds:

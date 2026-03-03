@@ -37,12 +37,12 @@ class TradingModel:
             )
         elif model_type == 'gradient_boosting':
             self.model = GradientBoostingClassifier(
-                n_estimators=200,
+                n_estimators=100,       # réduit pour éviter l'overfitting
                 learning_rate=0.05,
-                max_depth=5,
-                min_samples_split=10,
-                min_samples_leaf=5,
-                subsample=0.8,
+                max_depth=3,            # 5→3 : modèle moins profond = moins de mémorisation
+                min_samples_split=20,   # 10→20 : nécessite plus de données pour splitter
+                min_samples_leaf=15,    # 5→15 : feuilles plus larges = plus de régularisation
+                subsample=0.7,          # 0.8→0.7 : stochastique plus agressif
                 random_state=42
             )
         elif model_type == 'neural_network':

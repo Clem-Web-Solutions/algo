@@ -49,7 +49,7 @@ TRAINER_CONFIG = {
         # Taille maximale de la fenetre d'entrainement en jours (fenetre glissante)
         # Evite que les donnees recentes ecrasent progressivement les regimes historiques.
         # None = fenetre illimitee (comportement legacy)
-        'max_train_days': 730,  # ~2 ans
+        'max_train_days': 1095,  # ~3 ans (plus de données = moins d'overfitting)
     },
 
     # Seuils d'adaptation automatique
