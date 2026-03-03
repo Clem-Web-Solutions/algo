@@ -220,6 +220,21 @@ def run_training_cycle(logger, run_once=False):
     state_file = TRAINER_CONFIG['state_file']
     state = load_state(state_file)
 
+    # --- Auto-repair: nettoyer les valeurs corrompues dans ticker_overrides ---
+    repaired = False
+    for ticker, overrides in state.get('ticker_overrides', {}).items():
+        sl = overrides.get('stop_loss_pct', None)
+        if sl is not None and sl > 0:
+            logger.warning(
+                f"[AutoRepair] {ticker}: stop_loss_pct corrompu ({sl}%) "
+                f"-- reset automatique supprimé (retour au défaut -2.0%)"
+            )
+            del overrides['stop_loss_pct']
+            repaired = True
+    if repaired:
+        save_state(state, state_file)
+        logger.warning("[AutoRepair] State corrigé et sauvegardé automatiquement.")
+
     # --- Vérification des positions orphelines (détection post-crash) ---
     pos_manager = PositionStateManager(
         str(project_root / 'data' / 'position_state.json'),
