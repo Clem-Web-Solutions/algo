@@ -58,8 +58,10 @@ def setup_logger(name, log_file=None, log_dir='reports', level=logging.INFO):
     # Logger
     logger = logging.getLogger(name)
     logger.setLevel(level)
-    logger.addHandler(console_handler)
-    logger.addHandler(file_handler)
+    # Eviter d'accumuler les handlers a chaque re-initialisation (cause spam logs)
+    if not logger.handlers:
+        logger.addHandler(console_handler)
+        logger.addHandler(file_handler)
     
     return logger, str(log_filepath)
 
