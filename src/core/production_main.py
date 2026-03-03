@@ -200,7 +200,8 @@ class ProductionTradingPipeline:
                 
                 # Entraîner le modele
                 self.model = TradingModel(model_type=model_type)
-                self.model.train(X_train, y_train, X_val=X_test, y_val=y_test)
+                cv_scores = self.model.train(X_train, y_train, X_val=X_test, y_val=y_test)
+                self._cv_f1_mean = float(cv_scores.mean()) if cv_scores is not None and len(cv_scores) > 0 else 0.0
 
                 # Sauvegarder le modele, le scaler et la liste exacte des features
                 # Les trois fichiers doivent être en phase pour le live trading
@@ -242,7 +243,18 @@ class ProductionTradingPipeline:
             if not hasattr(self, 'X_test') or self.model is None:
                 self.logger.error("Model ou test data non disponible")
                 return False
-            
+
+            # ── Gate F1 ──────────────────────────────────────────────────────
+            # Si le modèle ne généralise pas (CV F1 < 0.45), ne pas trader
+            cv_f1 = getattr(self, '_cv_f1_mean', 0.0)
+            if cv_f1 < 0.45:
+                self.logger.warning(
+                    f"[Gate F1] CV F1={cv_f1:.3f} < 0.45 — backtest skippé "
+                    f"(modèle insuffisant pour {self.ticker} ce cycle)"
+                )
+                return False
+            # ─────────────────────────────────────────────────────────────────
+
             with self.error_handler.error_context("Backtest"):
                 # Determiner le regime dominant sur la periode d'ENTRAINEMENT uniquement
                 # (évite le lookahead : ne pas utiliser le régime de la période de test pour choisir les params)
@@ -320,6 +332,16 @@ class ProductionTradingPipeline:
                             f"[MLOpt] Kelly (quarter-fraction): {kelly_position_pct:.3f} | "
                             f"WR={val_fin_metrics.get('win_rate', 0):.1%}"
                         )
+                        # ── Gate Expectancy ───────────────────────────────────
+                        # Si la validation montre un setup perdant, ne pas trader
+                        val_exp = val_fin_metrics.get('expectancy', 0)
+                        if val_exp <= 0:
+                            self.logger.warning(
+                                f"[Gate Exp] Expectancy validation={val_exp:.3f}% ≤ 0 — "
+                                f"backtest skippé pour {self.ticker} (setup perdant sur validation)"
+                            )
+                            return False
+                        # ─────────────────────────────────────────────────────
                     else:
                         self.logger.warning("[MLOpt] Validation trop courte — seuil régime utilisé en fallback")
                 else:
@@ -353,6 +375,7 @@ class ProductionTradingPipeline:
                     stop_loss_pct=effective_sl,
                     take_profit_pct=adaptive_params['take_profit_pct'],
                     use_trend_filter=adaptive_params['use_trend_filter'],
+                    max_trades=20,  # Cap: limiter les commissions
                 )
 
                 # Executer le backtest

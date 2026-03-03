@@ -15,7 +15,7 @@ class BacktestEngine:
     def __init__(self, initial_capital=10000, position_size_pct=0.95,
                  stop_loss_pct=-2.0, take_profit_pct=5.0, use_trend_filter=True,
                  commission_pct=0.1, volatility_scaling=True, min_position_pct=0.40,
-                 slippage_pct=0.05, circuit_breaker_vol=0.80):
+                 slippage_pct=0.05, circuit_breaker_vol=0.80, max_trades=None):
         """
         Args:
             initial_capital: Capital initial en $
@@ -39,6 +39,8 @@ class BacktestEngine:
         self.min_position_pct = min_position_pct
         self.slippage_pct = slippage_pct / 100.0       # Convertir en decimal
         self.circuit_breaker_vol = circuit_breaker_vol  # Seuil vol annualisée (80%)
+        self.max_trades = max_trades  # Nombre max de trades acheteurs (None = illimité)
+        self._executed_buys = 0
         self.trades = []
         self.portfolio_value = [initial_capital]
         self.cash = initial_capital
@@ -132,7 +134,10 @@ class BacktestEngine:
             if signal == 1:
                 n_buy_signals += 1
                 if self.position == 0 and trend_ok:
-                    self._execute_buy(date, price, reason="Buy Signal")
+                    if self.max_trades is None or self._executed_buys < self.max_trades:
+                        self._execute_buy(date, price, reason="Buy Signal")
+                        self._executed_buys += 1
+                    # else: cap atteint, on ne prend plus de nouvelles positions
                 elif not trend_ok:
                     n_blocked_by_filter += 1
                 elif self.position > 0:
